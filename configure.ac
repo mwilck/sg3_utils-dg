@@ -76,4 +76,48 @@ AC_ARG_ENABLE([win32-spt-direct],
   AC_DEFINE_UNQUOTED(WIN32_SPT_DIRECT, 1, [enable Win32 SPT Direct], )
 )
 
+use_libiscsi=""
+AC_ARG_ENABLE([libiscsi],
+  AC_HELP_STRING([--enable-libiscsi], [enable iscsi support]),
+  use_libiscsi="$enableval"
+)
+
+AC_MSG_CHECKING(if libiscsi is available)
+if test "$use_libiscsi" = "yes" ; then
+  AC_MSG_RESULT(enabled)
+  AC_SUBST([libiscsi], ['-liscsi'])
+  AC_DEFINE_UNQUOTED(CONFIG_LIBISCSI, 1, [we have libiscsi support], )
+elif test "$use_libiscsi" = "no" ; then
+  AC_MSG_RESULT(disabled)
+  AC_SUBST([libiscsi], [''])
+else
+ac_save_CFLAGS="$CFLAGS"
+ac_save_LIBS="$LIBS"
+CFLAGS=""
+LIBS="-liscsi"
+AC_TRY_RUN([
+/*
+ * Just see if we can compile/link with libiscsi
+ */
+#include <iscsi/iscsi.h>
+int main(int argc, const char *argv[])
+{
+	iscsi_create_context("");
+	return 0;
+}
+], ac_cv_have_libiscsi=yes, ac_cv_have_libiscsi=no,
+   [echo $ac_n "compile with LIBISCSI. Assuming OK... $ac_c"
+    ac_cv_have_libiscsi=yes])
+CFLAGS="$ac_save_CFLAGS"
+LIBS="$ac_save_LIBS"
+if test "$ac_cv_have_libiscsi" = yes ; then
+  AC_MSG_RESULT(yes)
+  AC_SUBST([libiscsi], ['-liscsi'])
+  AC_DEFINE_UNQUOTED(CONFIG_LIBISCSI, 1, [we have libiscsi support], )
+else
+  AC_MSG_RESULT(no)
+  AC_SUBST([libiscsi], [''])
+fi
+fi
+
 AC_OUTPUT(Makefile include/Makefile lib/Makefile src/Makefile doc/Makefile)

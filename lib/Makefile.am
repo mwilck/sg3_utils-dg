@@ -8,6 +8,7 @@ libsgutils2_la_SOURCES = \
 	sg_cmds_extra.c \
 	sg_cmds_mmc.c \
 	sg_pt_common.c \
+	sg_pt_iscsi.c \
 	sg_pt_linux.c \
 	sg_io_linux.c
 
@@ -33,6 +34,7 @@ libsgutils2_la_SOURCES = \
 	sg_pt_win32.c
 
 EXTRA_libsgutils2_la_SOURCES = \
+	sg_pt_iscsi.c \
 	sg_pt_linux.c \
 	sg_io_linux.c \
 	sg_pt_freebsd.c \
@@ -55,6 +57,7 @@ libsgutils2_la_SOURCES = \
 	sg_pt_win32.c
 
 EXTRA_libsgutils2_la_SOURCES = \
+	sg_pt_iscsi.c \
 	sg_pt_linux.c \
 	sg_io_linux.c \
 	sg_pt_freebsd.c \
@@ -77,6 +80,7 @@ libsgutils2_la_SOURCES = \
 	sg_pt_freebsd.c
 
 EXTRA_libsgutils2_la_SOURCES = \
+	sg_pt_iscsi.c \
 	sg_pt_linux.c \
 	sg_io_linux.c \
 	sg_linux_inc.h \
@@ -100,6 +104,7 @@ libsgutils2_la_SOURCES = \
 	sg_pt_solaris.c
 
 EXTRA_libsgutils2_la_SOURCES = \
+	sg_pt_iscsi.c \
 	sg_pt_linux.c \
 	sg_io_linux.c \
 	sg_linux_inc.h \
@@ -123,6 +128,7 @@ libsgutils2_la_SOURCES = \
 	sg_pt_osf1.c
 
 EXTRA_libsgutils2_la_SOURCES = \
+	sg_pt_iscsi.c \
 	sg_pt_linux.c \
 	sg_io_linux.c \
 	sg_pt_freebsd.c \
@@ -140,7 +146,7 @@ lib_LTLIBRARIES = libsgutils2.la
 
 libsgutils2_la_LDFLAGS = -version-info 2:0:0
 
-libsgutils2_la_LIBADD = @GETOPT_O_FILES@ @os_libs@
+libsgutils2_la_LIBADD = @GETOPT_O_FILES@ @os_libs@ @libiscsi@
 libsgutils2_la_DEPENDENCIES = @GETOPT_O_FILES@
 
 

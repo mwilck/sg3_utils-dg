@@ -27,6 +27,10 @@
 #include "sg_lib.h"
 #include "sg_linux_inc.h"
 
+#ifdef CONFIG_LIBISCSI
+#include "sg_pt_iscsi.h"
+#endif
+
 #define DEF_TIMEOUT 60000       /* 60,000 millisecs (60 seconds) */
 
 static const char * linux_host_bytes[] = {
@@ -95,6 +99,10 @@ struct sg_pt_linux_scsi {
 };
 
 struct sg_pt_base {
+#ifdef CONFIG_LIBISCSI
+    int last_io_was_iscsi;
+    struct sg_pt_iscsi *iscsi;
+#endif
     struct sg_pt_linux_scsi impl;
 };
 
@@ -117,6 +125,12 @@ scsi_pt_open_flags(const char * device_name, int flags, int verbose)
 {
     int fd;
 
+#ifdef CONFIG_LIBISCSI
+    if (!strncmp(device_name, "iscsi://", 8)) {
+        return iscsi_pt_open_device(device_name, flags, verbose);
+    }
+#endif
+
     if (verbose > 1) {
         if (NULL == sg_warnings_strm)
             sg_warnings_strm = stderr;
@@ -135,6 +149,12 @@ scsi_pt_close_device(int device_fd)
 {
     int res;
 
+#ifdef CONFIG_LIBISCSI
+    if ((device_fd & ~ISCSI_FAKE_FD_MASK) == ISCSI_FAKE_FD_BASE) { 
+        return iscsi_pt_close_device(device_fd);
+    }
+#endif
+
     res = close(device_fd);
     if (res < 0)
         res = -errno;
@@ -145,30 +165,43 @@ scsi_pt_close_device(int device_fd)
 struct sg_pt_base *
 construct_scsi_pt_obj()
 {
+    struct sg_pt_base * pt;
     struct sg_pt_linux_scsi * ptp;
 
-    ptp = (struct sg_pt_linux_scsi *)
-          calloc(1, sizeof(struct sg_pt_linux_scsi));
-    if (ptp) {
+    pt = calloc(1, sizeof(struct sg_pt_base));
+    if (pt) {
+        ptp = &pt->impl;
         ptp->io_hdr.interface_id = 'S';
         ptp->io_hdr.dxfer_direction = SG_DXFER_NONE;
     }
-    return (struct sg_pt_base *)ptp;
+
+#ifdef CONFIG_LIBISCSI
+   pt->iscsi = construct_iscsi_pt_obj();
+#endif
+
+    return pt;
 }
 
 void
 destruct_scsi_pt_obj(struct sg_pt_base * vp)
 {
-    struct sg_pt_linux_scsi * ptp = &vp->impl;
+#ifdef CONFIG_LIBISCSI
+    if (vp->iscsi != NULL)
+        destruct_iscsi_pt_obj(vp->iscsi);
+#endif
 
-    if (ptp)
-        free(ptp);
+    if (vp)
+        free(vp);
 }
 
 void
 clear_scsi_pt_obj(struct sg_pt_base * vp)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    clear_iscsi_pt_obj(vp->iscsi);
+#endif
 
     if (ptp) {
         memset(ptp, 0, sizeof(struct sg_pt_linux_scsi));
@@ -183,6 +216,10 @@ set_scsi_pt_cdb(struct sg_pt_base * vp, const unsigned char * cdb,
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_cdb(vp->iscsi, cdb, cdb_len);
+#endif
+
     if (ptp->io_hdr.cmdp)
         ++ptp->in_err;
     ptp->io_hdr.cmdp = (unsigned char *)cdb;
@@ -194,6 +231,10 @@ set_scsi_pt_sense(struct sg_pt_base * vp, unsigned char * sense,
                   int max_sense_len)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_sense(vp->iscsi, sense, max_sense_len);
+#endif
 
     if (ptp->io_hdr.sbp)
         ++ptp->in_err;
@@ -208,6 +249,10 @@ set_scsi_pt_data_in(struct sg_pt_base * vp, unsigned char * dxferp,
                     int dxfer_len)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_data_in(vp->iscsi, dxferp, dxfer_len);
+#endif
 
     if (ptp->io_hdr.dxferp)
         ++ptp->in_err;
@@ -224,6 +269,10 @@ set_scsi_pt_data_out(struct sg_pt_base * vp, const unsigned char * dxferp,
                      int dxfer_len)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_data_out(vp->iscsi, dxferp, dxfer_len);
+#endif
 
     if (ptp->io_hdr.dxferp)
         ++ptp->in_err;
@@ -303,6 +352,14 @@ do_scsi_pt(struct sg_pt_base * vp, int fd, int time_secs, int verbose)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    vp->last_io_was_iscsi = 0;
+    if ((fd & ~ISCSI_FAKE_FD_MASK) == ISCSI_FAKE_FD_BASE) { 
+        vp->last_io_was_iscsi = 1;
+        return do_iscsi_pt(vp->iscsi, fd, time_secs, verbose);
+    }
+#endif
+
     if (NULL == sg_warnings_strm)
         sg_warnings_strm = stderr;
     ptp->os_err = 0;
@@ -339,6 +396,11 @@ get_scsi_pt_result_category(const struct sg_pt_base * vp)
     int dr_st = ptp->io_hdr.driver_status & SG_LIB_DRIVER_MASK;
     int scsi_st = ptp->io_hdr.status & 0x7e;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_result_category(vp->iscsi);
+#endif
+
     if (ptp->os_err)
         return SCSI_PT_RESULT_OS_ERR;
     else if (ptp->io_hdr.host_status)
@@ -360,6 +422,11 @@ get_scsi_pt_resid(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_resid(vp->iscsi);
+#endif
+
     return ptp->io_hdr.resid;
 }
 
@@ -368,6 +435,11 @@ get_scsi_pt_status_response(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_status_response(vp->iscsi);
+#endif
+
     return ptp->io_hdr.status;
 }
 
@@ -375,6 +447,11 @@ int
 get_scsi_pt_sense_len(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_sense_len(vp->iscsi);
+#endif
 
     return ptp->io_hdr.sb_len_wr;
 }
@@ -392,6 +469,11 @@ get_scsi_pt_transport_err(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_transport_err(vp->iscsi);
+#endif
+
     return (ptp->io_hdr.host_status << 8) + ptp->io_hdr.driver_status;
 }
 
@@ -399,6 +481,11 @@ int
 get_scsi_pt_os_err(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_os_err(vp->iscsi);
+#endif
 
     return ptp->os_err;
 }
@@ -415,6 +502,11 @@ get_scsi_pt_transport_err_str(const struct sg_pt_base * vp, int max_b_len,
     int driv, sugg;
     const char * driv_cp = "invalid";
     const char * sugg_cp = "invalid";
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_transport_err_str(vp->iscsi, max_b_len, b);
+#endif
 
     m = max_b_len;
     n = 0;
@@ -450,6 +542,11 @@ get_scsi_pt_os_err_str(const struct sg_pt_base * vp, int max_b_len, char * b)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
     const char * cp;
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_os_err_str(vp->iscsi, max_b_len, b);
+#endif
 
     cp = safe_strerror(ptp->os_err);
     strncpy(b, cp, max_b_len);
@@ -496,6 +593,10 @@ struct sg_pt_linux_scsi {
 };
 
 struct sg_pt_base {
+#ifdef CONFIG_LIBISCSI
+    int last_io_was_iscsi;
+    struct sg_pt_iscsi *iscsi;
+#endif
     struct sg_pt_linux_scsi impl;
 };
 
@@ -567,6 +668,12 @@ scsi_pt_open_flags(const char * device_name, int flags, int verbose)
 {
     int fd;
 
+#ifdef CONFIG_LIBISCSI
+    if (!strncmp(device_name, "iscsi://", 8)) {
+        return iscsi_pt_open_device(device_name, flags, verbose);
+    }
+#endif
+
     if (! bsg_major_checked) {
         bsg_major_checked = 1;
         find_bsg_major(verbose);
@@ -589,6 +696,12 @@ scsi_pt_close_device(int device_fd)
 {
     int res;
 
+#ifdef CONFIG_LIBISCSI
+    if ((device_fd & ~ISCSI_FAKE_FD_MASK) == ISCSI_FAKE_FD_BASE) { 
+        return iscsi_pt_close_device(device_fd);
+    }
+#endif
+
     res = close(device_fd);
     if (res < 0)
         res = -errno;
@@ -599,11 +712,12 @@ scsi_pt_close_device(int device_fd)
 struct sg_pt_base *
 construct_scsi_pt_obj()
 {
+    struct sg_pt_base * pt;
     struct sg_pt_linux_scsi * ptp;
 
-    ptp = (struct sg_pt_linux_scsi *)
-          calloc(1, sizeof(struct sg_pt_linux_scsi));
-    if (ptp) {
+    pt = calloc(1, sizeof(struct sg_pt_base));
+    if (pt) {
+        ptp = &pt->impl;
         ptp->io_hdr.guard = 'Q';
 #ifdef BSG_PROTOCOL_SCSI
         ptp->io_hdr.protocol = BSG_PROTOCOL_SCSI;
@@ -612,22 +726,34 @@ construct_scsi_pt_obj()
         ptp->io_hdr.subprotocol = BSG_SUB_PROTOCOL_SCSI_CMD;
 #endif
     }
-    return (struct sg_pt_base *)ptp;
+
+#ifdef CONFIG_LIBISCSI
+   pt->iscsi = construct_iscsi_pt_obj();
+#endif
+
+    return pt;
 }
 
 void
 destruct_scsi_pt_obj(struct sg_pt_base * vp)
 {
-    struct sg_pt_linux_scsi * ptp = &vp->impl;
+#ifdef CONFIG_LIBISCSI
+    if (vp->iscsi != NULL)
+        destruct_iscsi_pt_obj(vp->iscsi);
+#endif
 
-    if (ptp)
-        free(ptp);
+    if (vp)
+        free(vp);
 }
 
 void
 clear_scsi_pt_obj(struct sg_pt_base * vp)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    clear_iscsi_pt_obj(vp->iscsi);
+#endif
 
     if (ptp) {
         memset(ptp, 0, sizeof(struct sg_pt_linux_scsi));
@@ -647,6 +773,10 @@ set_scsi_pt_cdb(struct sg_pt_base * vp, const unsigned char * cdb,
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_cdb(vp->iscsi, cdb, cdb_len);
+#endif
+
     if (ptp->io_hdr.request)
         ++ptp->in_err;
     /* C99 has intptr_t instead of long */
@@ -659,6 +789,10 @@ set_scsi_pt_sense(struct sg_pt_base * vp, unsigned char * sense,
                   int max_sense_len)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_sense(vp->iscsi, sense, max_sense_len);
+#endif
 
     if (ptp->io_hdr.response)
         ++ptp->in_err;
@@ -674,6 +808,10 @@ set_scsi_pt_data_in(struct sg_pt_base * vp, unsigned char * dxferp,
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_data_in(vp->iscsi, dxferp, dxfer_len);
+#endif
+
     if (ptp->io_hdr.din_xferp)
         ++ptp->in_err;
     if (dxfer_len > 0) {
@@ -688,6 +826,10 @@ set_scsi_pt_data_out(struct sg_pt_base * vp, const unsigned char * dxferp,
                      int dxfer_len)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    set_iscsi_pt_data_out(vp->iscsi, dxferp, dxfer_len);
+#endif
 
     if (ptp->io_hdr.dout_xferp)
         ++ptp->in_err;
@@ -756,6 +898,11 @@ get_scsi_pt_resid(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_resid(vp->iscsi);
+#endif
+
     return ptp->io_hdr.din_resid;
 }
 
@@ -764,6 +911,11 @@ get_scsi_pt_status_response(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_status_response(vp->iscsi);
+#endif
+
     return ptp->io_hdr.device_status;
 }
 
@@ -771,6 +923,11 @@ int
 get_scsi_pt_sense_len(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_sense_len(vp->iscsi);
+#endif
 
     return ptp->io_hdr.response_len;
 }
@@ -788,6 +945,11 @@ get_scsi_pt_transport_err(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_transport_err(vp->iscsi);
+#endif
+
     return ptp->io_hdr.transport_status;
 }
 
@@ -804,6 +966,11 @@ get_scsi_pt_transport_err_str(const struct sg_pt_base * vp, int max_b_len,
     int driv, sugg;
     const char * driv_cp = "invalid";
     const char * sugg_cp = "invalid";
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_transport_err_str(vp->iscsi, max_b_len, b);
+#endif
 
     m = max_b_len;
     n = 0;
@@ -841,6 +1008,11 @@ get_scsi_pt_result_category(const struct sg_pt_base * vp)
     int dr_st = ptp->io_hdr.driver_status & SG_LIB_DRIVER_MASK;
     int scsi_st = ptp->io_hdr.device_status & 0x7e;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_result_category(vp->iscsi);
+#endif
+
     if (ptp->os_err)
         return SCSI_PT_RESULT_OS_ERR;
     else if (ptp->io_hdr.transport_status)
@@ -862,6 +1034,11 @@ get_scsi_pt_os_err(const struct sg_pt_base * vp)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
 
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_os_err(vp->iscsi);
+#endif
+
     return ptp->os_err;
 }
 
@@ -870,6 +1047,11 @@ get_scsi_pt_os_err_str(const struct sg_pt_base * vp, int max_b_len, char * b)
 {
     const struct sg_pt_linux_scsi * ptp = &vp->impl;
     const char * cp;
+
+#ifdef CONFIG_LIBISCSI
+    if (vp->last_io_was_iscsi)
+        return get_iscsi_pt_os_err_str(vp->iscsi, max_b_len, b);
+#endif
 
     cp = safe_strerror(ptp->os_err);
     strncpy(b, cp, max_b_len);
@@ -944,6 +1126,14 @@ do_scsi_pt(struct sg_pt_base * vp, int fd, int time_secs, int verbose)
 {
     struct sg_pt_linux_scsi * ptp = &vp->impl;
     void * p;
+
+#ifdef CONFIG_LIBISCSI
+    vp->last_io_was_iscsi = 0;
+    if ((fd & ~ISCSI_FAKE_FD_MASK) == ISCSI_FAKE_FD_BASE) { 
+        vp->last_io_was_iscsi = 1;
+        return do_iscsi_pt(vp->iscsi, fd, time_secs, verbose);
+    }
+#endif
 
     if (! bsg_major_checked) {
         bsg_major_checked = 1;
