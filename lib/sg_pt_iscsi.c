@@ -266,57 +266,62 @@ get_iscsi_pt_transport_err_str(const struct sg_pt_iscsi *iscsi, int max_b_len,
 int
 iscsi_pt_open_device(const char *device_name, int read_only, int verbose)
 {
-    char *tmpstr = NULL, *portal, *target, *lun;
     static int context_num = 0;
     struct iscsi_lun_context *iscsi;
+    struct iscsi_url *iscsi_url = NULL;
 
     /* keep compiler happy */
     read_only = read_only;
     verbose = verbose;
 
     if (strncmp(device_name, "iscsi://", 8)) {
-        return -1;
+        return -EINVAL;
     }
-
-    tmpstr = strdup(device_name);
-    portal = tmpstr+8;
-    target = index(portal, '/');
-    if (!target) {
-        fprintf(stderr, "Invalid iscsi url : %s\n", device_name);
-        free(tmpstr);
-        return -1;
-    }
-    *target++ = 0;
-    lun = index(target, '/');
-    if (!lun) {
-        fprintf(stderr, "Invalid iscsi url : %s\n", device_name);
-        free(tmpstr);
-        return -1;
-    }
-    *lun++ = 0;
 
     iscsi = malloc(sizeof(struct iscsi_lun_context));
     iscsi->context = iscsi_create_context("iqn.2010-12.org.sg3utils");
     if (!iscsi->context) {
-        fprintf(stderr, "Failed to create iscsi context for url %s\n", device_name);
-        free(tmpstr);
+        fprintf(stderr, "Failed to create iscsi context for url %s\n%s\n",
+                device_name, iscsi_get_error(iscsi->context));
         free(iscsi);
-	iscsi = NULL;
-        return -1;
+        iscsi = NULL;
+        return -EINVAL;
     }
 
-    iscsi->lun = atoi(lun);
-    iscsi_set_targetname(iscsi->context, target);
+    iscsi_url = iscsi_parse_full_url(iscsi->context, device_name);
+    if (iscsi_url == NULL) {
+        fprintf(stderr, "Failed to parse URL: %s\n", 
+                iscsi_get_error(iscsi->context));
+        iscsi_destroy_context(iscsi->context);
+        free(iscsi);
+        iscsi = NULL;
+        return -EINVAL;
+    }
+
+    iscsi->lun = iscsi_url->lun;
+    iscsi_set_targetname(iscsi->context, iscsi_url->target);
     iscsi_set_session_type(iscsi->context, ISCSI_SESSION_NORMAL);
     iscsi_set_header_digest(iscsi->context, ISCSI_HEADER_DIGEST_NONE_CRC32C);
 
-    if (iscsi_full_connect_sync(iscsi->context, portal, iscsi->lun) != 0) {
-        fprintf(stderr, "iSCSI login failed: %s\n", iscsi_get_error(iscsi->context));
-        free(tmpstr);
+    if (iscsi_url->user != NULL) {
+        if (iscsi_set_initiator_username_pwd(iscsi->context, iscsi_url->user, iscsi_url->passwd) != 0) {
+            fprintf(stderr, "Failed to set initiator username and password\n%s\n",
+                    iscsi_get_error(iscsi->context));
+            iscsi_destroy_url(iscsi_url);
+            iscsi_destroy_context(iscsi->context);
+            free(iscsi);
+            iscsi = NULL;
+            return -EINVAL;
+        }
+    }
+
+    if (iscsi_full_connect_sync(iscsi->context, iscsi_url->portal, iscsi->lun) != 0) {
+        fprintf(stderr, "iSCSI login failed: %s\n",
+                iscsi_get_error(iscsi->context));
         iscsi_destroy_context(iscsi->context);
         free(iscsi);
-	iscsi = NULL;
-        return -1;
+        iscsi = NULL;
+        return -EINVAL;
     }
 
     iscsi_contexts[context_num] = iscsi;
