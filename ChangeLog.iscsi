@@ -1,0 +1,6 @@
+This is a Changelog for iscsi port specific changes to
+sg3_utils
+
+Changelog for sg3_utils-1.32 [20110227] [svn: r389]
+  - branch libiscsi_svn
+  - merge/sync with trunk just after release of version 1.31

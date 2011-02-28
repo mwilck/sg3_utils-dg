@@ -1,6 +1,6 @@
 Summary: Utilities for devices that use SCSI command sets
 Name: sg3_utils
-Version: 1.31
+Version: 1.32
 # Release: 1%{?dist}
 Release: 1
 License: GPL
@@ -79,8 +79,12 @@ fi
 %{_libdir}/*.la
 
 %changelog
-* Wed Dec 22 2010 - dgilbert at interlog dot com
-- add sg_decode_sense
+* Fri Feb 25 2011 - dgilbert at interlog dot com
+- xxxxxxxxxxxxxxxxxx
+  * sg3_utils-1.32
+
+* Wed Feb 16 2011 - dgilbert at interlog dot com
+- add sg_decode_sense; track t10 changes
   * sg3_utils-1.31
 
 * Fri Nov 05 2010 - dgilbert at interlog dot com
